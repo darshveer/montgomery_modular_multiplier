@@ -3,9 +3,9 @@
 // Company: 
 // Engineer: 
 // 
-// Create Date: 13.11.2025 10:46:56
+// Create Date: 13.11.2025 22:08:03
 // Design Name: 
-// Module Name: cla_adder
+// Module Name: cla
 // Project Name: 
 // Target Devices: 
 // Tool Versions: 
@@ -20,9 +20,6 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 
-// ================================================================
-// Parameterized K-bit CLA Adder (Uses cla4 blocks)
-// ================================================================
 module cla_adder #(parameter K = 32)(
     input  [K-1:0] A, B,
     input          Cin,
@@ -55,4 +52,3 @@ module cla_adder #(parameter K = 32)(
 
     assign Cout = carry[N];
 endmodule
-

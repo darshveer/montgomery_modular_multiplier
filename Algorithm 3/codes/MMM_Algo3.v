@@ -1,132 +1,157 @@
-// ====================================================================
-// FINAL STABLE MONTGOMERY MULTIPLIER (ALGORITHM 3)
-// Inputs: 8-bit  A, B, m (must be odd for Montgomery)
-// Output: 8-bit Montgomery result
-// Internal datapath: FULL 32-BIT - prevents ANY overflow
-// ====================================================================
-module MMM_Algo3 #(parameter K = 8)(
-    input                 clk,
-    input                 rst,
-    input                 start,
-    input  [K-1:0]        A,
-    input  [K-1:0]        B,
-    input  [K-1:0]        m,
-    output reg [K-1:0]    P_out,
-    output reg            done
+`timescale 1ns / 1ps
+
+module Montgomery_MMM_Alg3 #(
+    parameter K_BITS = 256
+)(
+    input  wire              i_Clk,
+    input  wire              i_Rst,
+    input  wire              i_Start,
+    input  wire [K_BITS-1:0] i_A,
+    input  wire [K_BITS-1:0] i_B,
+    input  wire [K_BITS-1:0] i_m,
+    output wire [K_BITS-1:0] o_P_final,
+    output wire              o_Done
 );
 
-    // FIXED INTERNAL WIDTH = 32 BITS → no overflow ever
-    localparam W = 32;
+// ----------------------------------------------------
+// FSM
+// ----------------------------------------------------
+localparam STATE_IDLE    = 3'b000;
+localparam STATE_INIT    = 3'b001;
+localparam STATE_COMPUTE = 3'b010;
+localparam STATE_FINISH  = 3'b011;
+localparam STATE_DONE    = 3'b100;
 
-    reg [W-1:0] T;
-    reg [$clog2(K+1)-1:0] cnt;
-    reg [1:0] state, next_state;
+reg [2:0] state_reg, state_next;
+reg [$clog2(K_BITS):0] counter_reg, counter_next;
 
-    localparam IDLE = 2'b00;
-    localparam ITER = 2'b01;
-    localparam DONE = 2'b10;
-
-    // ------------------------------------------------------------
-    // gamma = Ai ? B : 0
-    // ------------------------------------------------------------
-    wire Ai = A[cnt];
-    wire [K-1:0] gamma_small;
-    wire [K-1:0] zero_small = {K{1'b0}};
-
-    mux2to1 #(K) M1 (
-        .A(zero_small),
-        .B(B),
-        .s(Ai),
-        .Y(gamma_small)
-    );
-
-    wire [W-1:0] gamma = { {(W-K){1'b0}}, gamma_small };
-
-    // ------------------------------------------------------------
-    // T + gamma  (full 32-bit add)
-    // ------------------------------------------------------------
-    wire [W-1:0] T_plus_gamma;
-    wire cout1;
-
-    cla_adder #(W) ADD1 (
-        .A(T),
-        .B(gamma),
-        .Cin(1'b0),
-        .Sum(T_plus_gamma),
-        .Cout(cout1)
-    );
-
-    wire q = T_plus_gamma[0];
-
-    // ------------------------------------------------------------
-    // q ? m : 0  (extend to 32 bits)
-    // ------------------------------------------------------------
-    wire [K-1:0] qm_small;
-    mux2to1 #(K) M2 (
-        .A(zero_small),
-        .B(m),
-        .s(q),
-        .Y(qm_small)
-    );
-
-    wire [W-1:0] qm = { {(W-K){1'b0}}, qm_small };
-
-    // ------------------------------------------------------------
-    // T + gamma + q*m (full 32-bit add)
-    // ------------------------------------------------------------
-    wire [W-1:0] T_plus_qm;
-    wire cout2;
-
-    cla_adder #(W) ADD2 (
-        .A(T_plus_gamma),
-        .B(qm),
-        .Cin(1'b0),
-        .Sum(T_plus_qm),
-        .Cout(cout2)
-    );
-
-    wire [W-1:0] T_next = T_plus_qm >> 1;
-
-    // ------------------------------------------------------------
-    // FSM
-    // ------------------------------------------------------------
-    always @(posedge clk or posedge rst) begin
-        if (rst) begin
-            state <= IDLE;
-            T <= 0;
-            cnt <= 0;
-            done <= 0;
-            P_out <= 0;
-        end else begin
-            state <= next_state;
-            case (state)
-                IDLE: begin
-                    done <= 0;
-                    if (start) begin
-                        T <= 0;
-                        cnt <= 0;
-                    end
-                end
-                ITER: begin
-                    T <= T_next;
-                    if (cnt < K-1)
-                        cnt <= cnt + 1;
-                end
-                DONE: begin
-                    done <= 1;
-                    P_out <= T[K-1:0];
-                end
-            endcase
-        end
+always @(posedge i_Clk or posedge i_Rst) begin
+    if (i_Rst) begin
+        state_reg   <= STATE_IDLE;
+        counter_reg <= 0;
+    end else begin
+        state_reg   <= state_next;
+        counter_reg <= counter_next;
     end
+end
 
-    always @(*) begin
-        next_state = state;
-        case (state)
-            IDLE: if (start) next_state = ITER;
-            ITER: if (cnt == K-1) next_state = DONE;
-            DONE: if (!start) next_state = IDLE;
+always @(*) begin
+    state_next   = state_reg;
+    counter_next = counter_reg;
+
+    case (state_reg)
+        STATE_IDLE:    if (i_Start)          state_next = STATE_INIT;
+
+        STATE_INIT:    begin counter_next=0; state_next = STATE_COMPUTE; end
+
+        STATE_COMPUTE: if (counter_reg == K_BITS-1)
+                            state_next = STATE_FINISH;
+                        else
+                            counter_next = counter_reg + 1;
+
+        STATE_FINISH:  state_next = STATE_DONE;
+        STATE_DONE:    if (!i_Start) state_next = STATE_IDLE;
+    endcase
+end
+
+assign o_Done = (state_reg == STATE_DONE);
+
+// ----------------------------------------------------
+// DATA PATH
+// ----------------------------------------------------
+reg [K_BITS-1:0] P_reg;
+wire [K_BITS-1:0] P_next;
+
+wire A_i     = (state_reg == STATE_COMPUTE) ? i_A[counter_reg] : 1'b0;
+wire B0      = i_B[0];
+wire t       = P_reg[0] ^ (A_i & B0);
+
+// MUX: A_i ? B : 0
+wire [K_BITS-1:0] term_AB;
+Mux_2to1_k_plus_1_logical #(.K_BITS(K_BITS-1)) M1 (
+    .i_A({K_BITS{1'b0}}),
+    .i_B(i_B),
+    .i_Sel(A_i),
+    .o_Y(term_AB)
+);
+
+// MUX: t ? m : 0
+wire [K_BITS-1:0] term_tm;
+Mux_2to1_k_plus_1_logical #(.K_BITS(K_BITS-1)) M2 (
+    .i_A({K_BITS{1'b0}}),
+    .i_B(i_m),
+    .i_Sel(t),
+    .o_Y(term_tm)
+);
+
+// -------------------------------
+// First add:   sum1 = P + A_i*B
+// -------------------------------
+wire [K_BITS-1:0] sum1_sum;
+wire sum1_cout;
+
+cla_adder #(.K(K_BITS)) ADD1 (
+    .A(P_reg),
+    .B(term_AB),
+    .Cin(1'b0),
+    .Sum(sum1_sum),
+    .Cout(sum1_cout)
+);
+
+wire [K_BITS:0] sum1_full = {sum1_cout, sum1_sum};
+
+// -------------------------------
+// Second add: sum1 + t*m
+// -------------------------------
+wire [K_BITS:0] term_tm_ext = {1'b0, term_tm};
+wire [K_BITS:0] P_new_full;
+wire cout2;
+
+cla_adder #(.K(K_BITS+1)) ADD2 (
+    .A(sum1_full),
+    .B(term_tm_ext),
+    .Cin(1'b0),
+    .Sum(P_new_full),
+    .Cout(cout2)
+);
+
+// divide by 2
+assign P_next = P_new_full[K_BITS:1];
+
+// -------------------------------
+// FINAL SUBTRACTION (if P >= m)
+// -------------------------------
+wire [K_BITS-1:0] final_sub_diff;
+wire final_sub_borrow;
+
+// subtractor: P_reg - m
+k_bit_subtractor #(.K(K_BITS)) SUB_FINAL (
+    .i_A(P_reg),
+    .i_B(i_m),
+    .o_Diff(final_sub_diff),
+    .o_Cout(final_sub_borrow)   // borrow=1 → P_reg >= m
+);
+
+// finalize output
+Mux_2to1_k_plus_1_logical #(.K_BITS(K_BITS-1)) M3 (
+    .i_A(P_reg),
+    .i_B(final_sub_diff),
+    .i_Sel(final_sub_borrow),
+    .o_Y(o_P_final)
+);
+
+// ----------------------------------------------------
+// UPDATE P REGISTER
+// ----------------------------------------------------
+always @(posedge i_Clk or posedge i_Rst) begin
+    if (i_Rst) begin
+        P_reg <= {K_BITS{1'b0}};
+    end else begin
+        case (state_reg)
+            STATE_INIT:   P_reg <= 0;
+            STATE_COMPUTE: P_reg <= P_next;
         endcase
     end
+end
 
 endmodule
