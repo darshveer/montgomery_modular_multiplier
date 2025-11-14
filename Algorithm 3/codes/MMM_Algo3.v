@@ -3,14 +3,14 @@
 module Montgomery_MMM_Alg3 #(
     parameter K_BITS = 256
 )(
-    input  wire              i_Clk,
-    input  wire              i_Rst,
-    input  wire              i_Start,
+    input  wire          i_Clk,
+    input  wire          i_Rst,
+    input  wire          i_Start,
     input  wire [K_BITS-1:0] i_A,
     input  wire [K_BITS-1:0] i_B,
     input  wire [K_BITS-1:0] i_m,
     output wire [K_BITS-1:0] o_P_final,
-    output wire              o_Done
+    output wire          o_Done
 );
 
 // ----------------------------------------------------
@@ -40,14 +40,14 @@ always @(*) begin
     counter_next = counter_reg;
 
     case (state_reg)
-        STATE_IDLE:    if (i_Start)          state_next = STATE_INIT;
+        STATE_IDLE:   if (i_Start)         state_next = STATE_INIT;
 
-        STATE_INIT:    begin counter_next=0; state_next = STATE_COMPUTE; end
+        STATE_INIT:   begin counter_next=0; state_next = STATE_COMPUTE; end
 
         STATE_COMPUTE: if (counter_reg == K_BITS-1)
-                            state_next = STATE_FINISH;
-                        else
-                            counter_next = counter_reg + 1;
+                           state_next = STATE_FINISH;
+                       else
+                           counter_next = counter_reg + 1;
 
         STATE_FINISH:  state_next = STATE_DONE;
         STATE_DONE:    if (!i_Start) state_next = STATE_IDLE;
@@ -90,6 +90,7 @@ Mux_2to1_k_plus_1_logical #(.K_BITS(K_BITS-1)) M2 (
 wire [K_BITS-1:0] sum1_sum;
 wire sum1_cout;
 
+// --- FIX 1: ADDED THIS MISSING INSTANTIATION ---
 cla_adder #(.K(K_BITS)) ADD1 (
     .A(P_reg),
     .B(term_AB),
@@ -107,12 +108,13 @@ wire [K_BITS:0] term_tm_ext = {1'b0, term_tm};
 wire [K_BITS:0] P_new_full;
 wire cout2;
 
-cla_adder #(.K(K_BITS+1)) ADD2 (
-    .A(sum1_full),
-    .B(term_tm_ext),
-    .Cin(1'b0),
-    .Sum(P_new_full),
-    .Cout(cout2)
+// --- FIX 2: CORRECTED PORT NAMES FOR RIPPLE_CARRY_ADDER ---
+ripple_carry_adder #(.K(K_BITS+1)) ADD2 (
+    .i_A    (sum1_full),
+    .i_B    (term_tm_ext),
+    .i_Cin  (1'b0),
+    .o_Sum  (P_new_full),
+    .o_Cout (cout2)
 );
 
 // divide by 2
@@ -129,7 +131,7 @@ k_bit_subtractor #(.K(K_BITS)) SUB_FINAL (
     .i_A(P_reg),
     .i_B(i_m),
     .o_Diff(final_sub_diff),
-    .o_Cout(final_sub_borrow)   // borrow=1 → P_reg >= m
+    .o_Cout(final_sub_borrow)   // borrow=1 -> P_reg >= m
 );
 
 // finalize output
